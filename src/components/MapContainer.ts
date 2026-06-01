@@ -8,7 +8,7 @@
 // paint anyway. Keep this import at the top of the file so Vite associates it
 // with this module's chunk, not whichever sibling pulls it in first.
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { isMobileDevice } from '@/utils';
+import { isMobileDevice, saveToStorage, showToast } from '@/utils';
 import { MapComponent } from './Map';
 import { DeckGLMap, type DeckMapView, type CountryClickPayload } from './DeckGLMap';
 import type { GlobeMap } from './GlobeMap';
@@ -53,6 +53,7 @@ import type { WebcamEntry, WebcamCluster } from '@/generated/client/worldmonitor
 import type { TrafficAnomaly as ProtoTrafficAnomaly, DdosLocationHit } from '@/generated/client/worldmonitor/infrastructure/v1/service_client';
 import type { DiseaseOutbreakItem } from '@/services/disease-outbreaks';
 import type { GetChokepointStatusResponse } from '@/services/supply-chain';
+import { STORAGE_KEYS } from '@/config';
 import type { ScenarioVisualState, ScenarioResult } from '@/config/scenario-templates';
 import { getAuthState } from '@/services/auth-state';
 import { hasPremiumAccess } from '@/services/panel-gating';
@@ -210,8 +211,22 @@ export class MapContainer {
   }
 
   private loadGlobeMapCtor(): Promise<GlobeMapCtor> {
-    this.globeMapCtorPromise ??= import('./GlobeMap').then(({ GlobeMap }) => GlobeMap);
+    if (!this.globeMapCtorPromise) {
+      this.globeMapCtorPromise = import('./GlobeMap')
+        .then(({ GlobeMap }) => GlobeMap)
+        .catch((error) => {
+          this.globeMapCtorPromise = null;
+          throw error;
+        });
+    }
     return this.globeMapCtorPromise;
+  }
+
+  private markFlatModeAfterGlobeFailure(): void {
+    saveToStorage(STORAGE_KEYS.mapMode, 'flat');
+    document.querySelectorAll<HTMLButtonElement>('#mapDimensionToggle .map-dim-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.mode === 'flat');
+    });
   }
 
   private observeContainerResize(): void {
@@ -230,10 +245,26 @@ export class MapContainer {
   ): Promise<void> {
     const activationId = ++this.globeActivationId;
     console.log('[MapContainer] Initializing 3D globe (globe.gl mode)');
-    const GlobeMapCtor = await this.loadGlobeMapCtor();
-    if (this.destroyed || !this.useGlobe || activationId !== this.globeActivationId) return;
 
-    this.globeMap = new GlobeMapCtor(this.container, this.initialState);
+    try {
+      const GlobeMapCtor = await this.loadGlobeMapCtor();
+      if (this.destroyed || !this.useGlobe || activationId !== this.globeActivationId) return;
+
+      this.globeMap = new GlobeMapCtor(this.container, this.initialState);
+    } catch (error) {
+      if (this.destroyed || !this.useGlobe || activationId !== this.globeActivationId) return;
+
+      console.warn('[MapContainer] Globe initialization failed, falling back to flat map', error);
+      this.useGlobe = false;
+      this.useDeckGL = this.shouldUseDeckGL();
+      this.markFlatModeAfterGlobeFailure();
+      this.init();
+      if (snapshot) this.restoreViewport(snapshot, center ?? null);
+      this.rehydrateActiveMap();
+      showToast('3D globe failed to load. Showing 2D map instead.');
+      return;
+    }
+
     this.observeContainerResize();
     if (snapshot) this.restoreViewport(snapshot, center ?? null);
     this.rehydrateActiveMap();
