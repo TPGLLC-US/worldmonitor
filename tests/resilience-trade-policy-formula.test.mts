@@ -4,8 +4,8 @@
 // `tradeSanctions` dim to `tradePolicy` and DROPPED the OFAC-domicile-
 // count component (was weight 0.45). The remaining 3 components were
 // reweighted to total 1.0:
-//   WTO restrictions count → 0.30 (was 0.15)
-//   WTO barriers count     → 0.30 (was 0.15)
+//   WTO MFN tariff baseline pressure → 0.30 (was 0.15)
+//   WTO agricultural tariff-gap pressure → 0.30 (was 0.15)
 //   applied tariff rate    → 0.40 (was 0.25)
 //
 // The earlier `tests/resilience-sanctions-field-mapping.test.mts`
@@ -101,6 +101,51 @@ describe('scoreTradePolicy — 3-component weighted-blend formula (Ship 1 contra
     assert.equal(result.coverage, 0.60, `coverage must reflect 0.30+0.30 observed weights / 1.0 total, got ${result.coverage}`);
   });
 
+  it('one-row WTO severity payload separates high, moderate, and low reporters', async () => {
+    const reader: ResilienceSeedReader = async (key) => {
+      if (key === 'trade:restrictions:v1:tariff-overview:50') {
+        return {
+          restrictions: [
+            { reportingCountry: 'HH', description: 'WTO MFN baseline: 18.1%', status: 'high' },
+            { reportingCountry: 'MM', description: 'WTO MFN baseline: 7.5%', status: 'moderate' },
+            { reportingCountry: 'LL', description: 'WTO MFN baseline: 1.9%', status: 'low' },
+          ],
+          _reporterCountries: ['HH', 'MM', 'LL'],
+        };
+      }
+      if (key === 'trade:barriers:v1:tariff-gap:50') {
+        return {
+          barriers: [
+            { notifyingCountry: 'HH', title: 'Agricultural tariff: 36.7% vs Non-agricultural: 13.0% (gap: +23.7pp)', status: 'high' },
+            { notifyingCountry: 'MM', title: 'Agricultural tariff: 12.5% vs Non-agricultural: 5.0% (gap: +7.5pp)', status: 'moderate' },
+            { notifyingCountry: 'LL', title: 'Agricultural tariff: 5.0% vs Non-agricultural: 3.1% (gap: +1.9pp)', status: 'low' },
+          ],
+          _reporterCountries: ['HH', 'MM', 'LL'],
+        };
+      }
+      return null;
+    };
+
+    const high = await scoreTradePolicy('HH', reader);
+    const moderate = await scoreTradePolicy('MM', reader);
+    const low = await scoreTradePolicy('LL', reader);
+
+    assert.equal(high.score, 15, `high-pressure one-row payload must not stay near 100, got ${high.score}`);
+    assert.equal(moderate.score, 69, `moderate-pressure one-row payload must sit between high and low, got ${moderate.score}`);
+    assert.equal(low.score, 93, `low-pressure one-row payload should remain high but distinct, got ${low.score}`);
+    assert.ok(high.score < moderate.score && moderate.score < low.score, 'severity ordering must be monotonic');
+  });
+
+  it('non-reporter country still gets WTO unmonitored imputation', async () => {
+    const reader = emptyReporterReader(['US', 'DE']);
+    const result = await scoreTradePolicy('BF', reader);
+    assert.equal(result.score, 60, `non-reporter score must remain WTO imputation score, got ${result.score}`);
+    assert.equal(result.coverage, 0.24, `non-reporter coverage must retain 0.4 certainty on both WTO slots, got ${result.coverage}`);
+    assert.equal(result.observedWeight, 0, `non-reporter WTO slots must not be observed, got ${result.observedWeight}`);
+    assert.equal(result.imputedWeight, 0.60, `non-reporter WTO slots must remain imputed weight 0.60, got ${result.imputedWeight}`);
+    assert.equal(result.imputationClass, 'unmonitored', `non-reporter class must remain unmonitored, got ${result.imputationClass}`);
+  });
+
   it('weights total exactly 1.0 across the 3 components (full-data path)', async () => {
     // Drive every component into the real-data path via a reader that
     // populates the static-record tariff value AND the WTO arrays
@@ -124,10 +169,10 @@ describe('scoreTradePolicy — 3-component weighted-blend formula (Ship 1 contra
   });
 
   it('full-data worst-case at every anchor scores 0 (formula sanity)', async () => {
-    // Restrictions = 30 (counted at IN_FORCE weight 3 each → 30 entries
-    //   would exceed the 30-best→0-worst goalpost; 10 IN_FORCE entries
-    //   suffice to hit 30 effective points).
-    // Barriers     = 40 plain notifications.
+    // Restrictions = 30 (legacy IN_FORCE fallback weight 3 each; 10 entries
+    //   exceed the 20-best→0-worst tariff-pressure goalpost).
+    // Barriers     = 40 legacy plain notifications, exceeding the 30pp
+    //   tariff-gap pressure goalpost.
     // Tariff       = 20 → 0 (lowerBetter, worst goalpost).
     // Score = (0*0.30 + 0*0.30 + 0*0.40) / 1.0 = 0.
     const reader: ResilienceSeedReader = async (key) => {

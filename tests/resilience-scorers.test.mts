@@ -155,16 +155,16 @@ describe('resilience scorer contracts', () => {
     // debt-stabilizing) normalizes to ~63 against the -5/+3 goalposts,
     // higher than the level-only blend the previous weights produced for
     // a country with debt=122% GDP.
-    // Round 2 P2-N2: economic 53.25 -> 54.25 after replacing the old
+    // Round 2 P2-N2: economic stays at 53.25 after replacing the old
     // lower-is-better inflation clamp with explicit inflation-stability
-    // scoring. The fixture's low-positive inflation now lands in the target
-    // band instead of being scored as a distance from zero.
+    // scoring; the WTO pressure re-anchor offsets the fixture's inflation
+    // lift in the flat economic mean.
     // Issue #3971: infrastructure 79 -> 79.67 after capping the cyberDigital
     // per-snapshot cyber severity weight (fixture threats are undated, so the
     // whole snapshot is one capped bucket — same value pre/post the day-bucket
     // rework). This is a per-snapshot cap, not multi-day smoothing.
     assert.deepEqual(domainAverages, {
-      economic: 54.25,
+      economic: 53.25,
       infrastructure: 79.67,
       energy: 80,
       'social-governance': 66.25,
@@ -254,9 +254,10 @@ describe('resilience scorer contracts', () => {
     //   stress score 69.08 -> 69.63.
     // Issue #3971 cyberDigital burst cap: stress score 69.63 -> 69.91.
     // Round 2 P2-N2 inflation-stability scorer: stress score 69.91 -> 70.38.
-    //   1 - 70.38/100 = 0.2962, clamped to 0.5.
-    assert.equal(stressScore, 70.38);
-    assert.equal(stressFactor, 0.2962);
+    // WTO pressure re-anchor then lowers the US stress mean to 70.10.
+    //   1 - 70.10/100 = 0.2990, clamped to 0.5.
+    assert.equal(stressScore, 70.1);
+    assert.equal(stressFactor, 0.299);
 
     const overallScore = round(
       RESILIENCE_DOMAIN_ORDER.map((domainId) => {
@@ -316,7 +317,8 @@ describe('resilience scorer contracts', () => {
     // Plan 2026-05-12 debtSustainabilityGap addition: 65.64 → 66.02.
     // Issue #3971 cyberDigital burst cap: 66.02 -> 66.12.
     // Round 2 P2-N2 inflation-stability scorer: 66.12 -> 66.38.
-    assert.equal(overallScore, 66.38);
+    // WTO pressure re-anchor then lowers the US fixture score to 66.23.
+    assert.equal(overallScore, 66.23);
   });
 
   it('baselineScore is computed from baseline + mixed dimensions only', async () => {
@@ -427,7 +429,8 @@ describe('resilience scorer contracts', () => {
     // overall +0.38 at the recovery domain weight.
     // Issue #3971 cyberDigital burst cap: 66.02 -> 66.12.
     // Round 2 P2-N2 inflation-stability scorer: 66.12 -> 66.38.
-    assert.equal(expected, 66.38, 'overallScore should match sum(domainScore * domainWeight); plan 002 §U4+§U6 64.78 -> 65.64 -> plan 2026-05-12 -> 66.02 -> issue #3971 -> 66.12 -> round2 P2-N2 -> 66.38');
+    // WTO pressure re-anchor then lowers the US fixture score to 66.23.
+    assert.equal(expected, 66.23, 'overallScore should match sum(domainScore * domainWeight); plan 002 §U4+§U6 64.78 -> 65.64 -> plan 2026-05-12 -> 66.02 -> issue #3971 -> 66.12 -> round2 P2-N2 -> 66.38 -> WTO pressure -> 66.23');
   });
 
   it('stressFactor is still computed (informational) and clamped to [0, 0.5]', () => {

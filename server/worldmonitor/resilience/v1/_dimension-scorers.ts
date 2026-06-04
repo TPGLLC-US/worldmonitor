@@ -234,10 +234,13 @@ interface TradeRestriction {
   reportingCountry?: string;
   affectedCountry?: string;
   status?: string;
+  description?: string;
 }
 
 interface TradeBarrier {
   notifyingCountry?: string;
+  status?: string;
+  title?: string;
 }
 
 interface CyberThreat {
@@ -1010,7 +1013,7 @@ export function countTradeRestrictions(raw: unknown, countryCode: string): numbe
     const matches = matchesCountryIdentifier(item.reportingCountry, countryCode)
       || matchesCountryIdentifier(item.affectedCountry, countryCode);
     if (!matches) return count;
-    return count + (String(item.status || '').toUpperCase() === 'IN_FORCE' ? 3 : 1);
+    return count + tradeRestrictionPressure(item);
   }, 0);
 }
 
@@ -1018,7 +1021,45 @@ export function countTradeBarriers(raw: unknown, countryCode: string): number {
   const barriers: TradeBarrier[] = Array.isArray((raw as { barriers?: unknown[] } | null)?.barriers)
     ? ((raw as { barriers?: TradeBarrier[] }).barriers ?? [])
     : [];
-  return barriers.reduce((count, item) => count + (matchesCountryIdentifier(item.notifyingCountry, countryCode) ? 1 : 0), 0);
+  return barriers.reduce((count, item) => {
+    if (!matchesCountryIdentifier(item.notifyingCountry, countryCode)) return count;
+    return count + tradeBarrierPressure(item);
+  }, 0);
+}
+
+function tradeRestrictionPressure(item: TradeRestriction): number {
+  const tariffRate = parseFirstNumber(item.description);
+  if (tariffRate != null) return tariffRate;
+  return tradeSeverityFallback(item.status, { high: 15, moderate: 7.5, low: 2.5, inForce: 3, unknown: 1 });
+}
+
+function tradeBarrierPressure(item: TradeBarrier): number {
+  const gap = parseNamedNumber(item.title, /\bgap:\s*([+-]?\d+(?:\.\d+)?)/i);
+  if (gap != null) return Math.max(0, gap);
+  return tradeSeverityFallback(item.status, { high: 20, moderate: 7.5, low: 2.5, inForce: 3, unknown: 1 });
+}
+
+function tradeSeverityFallback(
+  status: unknown,
+  values: { high: number; moderate: number; low: number; inForce: number; unknown: number },
+): number {
+  const normalized = String(status ?? '').trim().toUpperCase();
+  if (normalized === 'HIGH') return values.high;
+  if (normalized === 'MODERATE' || normalized === 'MEDIUM') return values.moderate;
+  if (normalized === 'LOW') return values.low;
+  if (normalized === 'IN_FORCE') return values.inForce;
+  return values.unknown;
+}
+
+function parseFirstNumber(value: unknown): number | null {
+  return parseNamedNumber(value, /([+-]?\d+(?:\.\d+)?)/);
+}
+
+function parseNamedNumber(value: unknown, pattern: RegExp): number | null {
+  const match = String(value ?? '').match(pattern);
+  if (!match?.[1]) return null;
+  const numeric = Number(match[1]);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function isInWtoReporterSet(raw: unknown, countryCode: string): boolean {
@@ -1351,8 +1392,8 @@ export async function scoreCurrencyExternal(
 // 0.45) was DROPPED — domicile-of-designated-entities is a corporate-finance
 // liability metric, not a country-resilience indicator. The remaining 3
 // trade-policy components are reweighted to total 1.0:
-//   WTO restrictions count → 0.30 (was 0.15)
-//   WTO barriers count     → 0.30 (was 0.15)
+//   WTO MFN tariff baseline pressure → 0.30 (was 0.15)
+//   WTO agricultural tariff-gap pressure → 0.30 (was 0.15)
 //   applied tariff rate    → 0.40 (was 0.25)
 // The `sanctions:country-counts:v1` seed key is no longer read by this
 // module; only `scripts/seed-sanctions-pressure.mjs` continues to WRITE it
@@ -1372,8 +1413,8 @@ export async function scoreTradePolicy(
     readStaticCountry(countryCode, reader),
   ]);
 
-  const restrictionCount = countTradeRestrictions(restrictionsRaw, countryCode);
-  const barrierCount = countTradeBarriers(barriersRaw, countryCode);
+  const restrictionPressure = countTradeRestrictions(restrictionsRaw, countryCode);
+  const barrierPressure = countTradeBarriers(barriersRaw, countryCode);
 
   const inRestrictionsReporterSet = isInWtoReporterSet(restrictionsRaw, countryCode);
   const inBarriersReporterSet = isInWtoReporterSet(barriersRaw, countryCode);
@@ -1387,12 +1428,12 @@ export async function scoreTradePolicy(
       ? { score: null, weight: 0.30 }
       : !inRestrictionsReporterSet
         ? { score: IMPUTE.wtoData.score, weight: 0.30, certaintyCoverage: IMPUTE.wtoData.certaintyCoverage, imputed: true, imputationClass: IMPUTE.wtoData.imputationClass }
-        : { score: normalizeLowerBetter(restrictionCount, 0, 30), weight: 0.30 },
+        : { score: normalizeLowerBetter(restrictionPressure, 0, 20), weight: 0.30 },
     barriersRaw == null
       ? { score: null, weight: 0.30 }
       : !inBarriersReporterSet
         ? { score: IMPUTE.wtoData.score, weight: 0.30, certaintyCoverage: IMPUTE.wtoData.certaintyCoverage, imputed: true, imputationClass: IMPUTE.wtoData.imputationClass }
-        : { score: normalizeLowerBetter(barrierCount, 0, 40), weight: 0.30 },
+        : { score: normalizeLowerBetter(barrierPressure, 0, 30), weight: 0.30 },
     { score: tariffRate == null ? null : normalizeLowerBetter(tariffRate, 0, 20), weight: 0.40 },
   ]);
 }

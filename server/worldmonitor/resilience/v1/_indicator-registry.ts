@@ -221,9 +221,9 @@ export const INDICATOR_REGISTRY: IndicatorSpec[] = [
   {
     id: 'tradeRestrictions',
     dimension: 'tradePolicy',
-    description: 'WTO trade restrictions count (IN_FORCE weighted 3x); curated reporter set',
+    description: 'WTO MFN tariff baseline pressure, using seeded percent values with severity fallback; curated reporter set',
     direction: 'lowerBetter',
-    goalposts: { worst: 30, best: 0 },
+    goalposts: { worst: 20, best: 0 },
     weight: 0.30,
     sourceKey: 'trade:restrictions:v1:tariff-overview:50',
     scope: 'curated',
@@ -240,9 +240,9 @@ export const INDICATOR_REGISTRY: IndicatorSpec[] = [
   {
     id: 'tradeBarriers',
     dimension: 'tradePolicy',
-    description: 'WTO trade barrier notifications count; curated reporter set',
+    description: 'WTO agricultural tariff-gap pressure in percentage points, with severity fallback; curated reporter set',
     direction: 'lowerBetter',
-    goalposts: { worst: 40, best: 0 },
+    goalposts: { worst: 30, best: 0 },
     weight: 0.30,
     sourceKey: 'trade:barriers:v1:tariff-gap:50',
     scope: 'curated',
