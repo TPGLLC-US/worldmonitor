@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import { WatchlistTableView } from '../src/components/WatchlistTableView';
@@ -15,6 +16,7 @@ type ViewState = {
   expandedKey: string | null;
   virtualStart: number;
   virtualScrollTop: number;
+  expandedDetailHeight: number;
 };
 
 function createItems(count = 618): Item[] {
@@ -118,5 +120,28 @@ describe('WatchlistTableView virtualization', () => {
     html = view.render();
     assert.match(html, /watchlist-detail-row/);
     assert.match(html, /Detail SYM002/);
+  });
+
+  it('carries measured expanded-detail height into spacer rows outside the rendered window', () => {
+    const view = createView();
+    const state = stateOf(view);
+    state.expandedKey = 'SYM002';
+    state.expandedDetailHeight = 240;
+    state.virtualStart = 10;
+
+    const html = view.render();
+
+    assert.match(html, /watchlist-virtual-spacer-top/);
+    assert.match(html, /height:570px/, 'top spacer includes 10 rows plus the measured expanded detail height');
+    assert.doesNotMatch(html, /Detail SYM002/, 'off-window expanded detail should be represented by spacer height, not mounted');
+  });
+
+  it('does not resort the full list from the scroll handler', () => {
+    const source = readFileSync(new URL('../src/components/WatchlistTableView.ts', import.meta.url), 'utf8');
+    const scrollHandler = source.match(/scrollEl\.addEventListener\('scroll'[\s\S]*?\}, \{ passive: true \}\);/);
+
+    assert.ok(scrollHandler, 'scroll handler should be present');
+    assert.doesNotMatch(scrollHandler[0], /getFilteredSorted\(/);
+    assert.match(scrollHandler[0], /dataset\.watchlistTotalrows/);
   });
 });

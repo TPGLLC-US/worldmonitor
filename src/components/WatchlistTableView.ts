@@ -81,6 +81,7 @@ export class WatchlistTableView<T> {
     expandedKey: string | null;
     virtualStart: number;
     virtualScrollTop: number;
+    expandedDetailHeight: number;
   };
 
   constructor(private config: WatchlistConfig<T>) {
@@ -91,6 +92,7 @@ export class WatchlistTableView<T> {
       expandedKey: null,
       virtualStart: 0,
       virtualScrollTop: 0,
+      expandedDetailHeight: 0,
     };
   }
 
@@ -100,7 +102,10 @@ export class WatchlistTableView<T> {
     // (e.g. watchlist editor removed it between refreshes).
     if (this.state.expandedKey) {
       const stillPresent = items.some((item) => this.config.getKey(item) === this.state.expandedKey);
-      if (!stillPresent) this.state.expandedKey = null;
+      if (!stillPresent) {
+        this.state.expandedKey = null;
+        this.state.expandedDetailHeight = 0;
+      }
     }
   }
 
@@ -160,19 +165,22 @@ export class WatchlistTableView<T> {
       return list.map((item) => this.renderRow(item)).join('');
     }
 
-    const start = this.getClampedVirtualStart(list);
+    const start = this.clampAndSyncVirtualStart(list);
     const end = Math.min(list.length, start + VIRTUAL_VISIBLE_ROWS + VIRTUAL_OVERSCAN_ROWS * 2);
+    const expandedIndex = this.getExpandedIndex(list);
     const topSpacerRows = start;
     const bottomSpacerRows = Math.max(0, list.length - end);
-    const topSpacer = this.renderSpacerRow(topSpacerRows, 'top');
+    const expandedDetailAbove = expandedIndex >= 0 && expandedIndex < start ? this.state.expandedDetailHeight : 0;
+    const expandedDetailBelow = expandedIndex >= end ? this.state.expandedDetailHeight : 0;
+    const topSpacer = this.renderSpacerRow(topSpacerRows, 'top', expandedDetailAbove);
     const rows = list.slice(start, end).map((item) => this.renderRow(item)).join('');
-    const bottomSpacer = this.renderSpacerRow(bottomSpacerRows, 'bottom');
+    const bottomSpacer = this.renderSpacerRow(bottomSpacerRows, 'bottom', expandedDetailBelow);
     return `${topSpacer}${rows}${bottomSpacer}`;
   }
 
-  private renderSpacerRow(rowCount: number, position: 'top' | 'bottom'): string {
-    if (rowCount <= 0) return '';
-    const height = rowCount * VIRTUAL_ROW_HEIGHT_PX;
+  private renderSpacerRow(rowCount: number, position: 'top' | 'bottom', extraHeight = 0): string {
+    const height = rowCount * VIRTUAL_ROW_HEIGHT_PX + extraHeight;
+    if (height <= 0) return '';
     return `<tr class="watchlist-virtual-spacer watchlist-virtual-spacer-${position}" aria-hidden="true"><td colspan="${this.config.columns.length}" style="height:${height}px;padding:0;border:0"></td></tr>`;
   }
 
@@ -183,7 +191,11 @@ export class WatchlistTableView<T> {
   private getClampedVirtualStart(list: T[]): number {
     if (!this.shouldVirtualize(list)) return 0;
     const maxStart = Math.max(0, list.length - VIRTUAL_VISIBLE_ROWS);
-    const start = Math.min(Math.max(0, this.state.virtualStart), maxStart);
+    return Math.min(Math.max(0, this.state.virtualStart), maxStart);
+  }
+
+  private clampAndSyncVirtualStart(list: T[]): number {
+    const start = this.getClampedVirtualStart(list);
     if (start !== this.state.virtualStart) this.state.virtualStart = start;
     return start;
   }
@@ -193,6 +205,11 @@ export class WatchlistTableView<T> {
     if (!this.shouldVirtualize(list)) return list.length;
     const start = this.getClampedVirtualStart(list);
     return Math.min(list.length - start, VIRTUAL_VISIBLE_ROWS + VIRTUAL_OVERSCAN_ROWS * 2);
+  }
+
+  private getExpandedIndex(list: T[]): number {
+    if (!this.state.expandedKey) return -1;
+    return list.findIndex((item) => this.config.getKey(item) === this.state.expandedKey);
   }
 
   private renderControls(): string {
@@ -256,7 +273,12 @@ export class WatchlistTableView<T> {
     rootEl.querySelectorAll<HTMLElement>('.watchlist-row').forEach((rowEl) => {
       rowEl.addEventListener('click', () => {
         const key = rowEl.dataset.rowkey || '';
-        this.state.expandedKey = this.state.expandedKey === key ? null : key;
+        if (this.state.expandedKey === key) {
+          this.state.expandedKey = null;
+          this.state.expandedDetailHeight = 0;
+        } else {
+          this.state.expandedKey = key;
+        }
         onRerender();
       });
     });
@@ -302,8 +324,8 @@ export class WatchlistTableView<T> {
     if (scrollEl) {
       scrollEl.scrollTop = this.state.virtualScrollTop;
       scrollEl.addEventListener('scroll', () => {
-        const list = this.getFilteredSorted();
-        if (!this.shouldVirtualize(list)) return;
+        const totalRows = Number(rootEl.dataset.watchlistTotalrows || 0);
+        if (totalRows <= VIRTUALIZE_ROW_THRESHOLD) return;
         const nextStart = Math.max(0, Math.floor(scrollEl.scrollTop / VIRTUAL_ROW_HEIGHT_PX) - VIRTUAL_OVERSCAN_ROWS);
         if (nextStart === this.state.virtualStart) {
           this.state.virtualScrollTop = scrollEl.scrollTop;
@@ -314,6 +336,8 @@ export class WatchlistTableView<T> {
         onRerender();
       }, { passive: true });
     }
+
+    this.syncExpandedDetailHeight(rootEl);
 
     // Search input — focus restored after rerender (setContent destroys
     // the DOM, so we keep the cursor position by reading selection state
@@ -351,5 +375,16 @@ export class WatchlistTableView<T> {
   private resetVirtualWindow(): void {
     this.state.virtualStart = 0;
     this.state.virtualScrollTop = 0;
+  }
+
+  private syncExpandedDetailHeight(rootEl: HTMLElement): void {
+    if (!this.state.expandedKey) {
+      this.state.expandedDetailHeight = 0;
+      return;
+    }
+    const detailEl = rootEl.querySelector('.watchlist-detail-row') as HTMLElement | null;
+    if (!detailEl) return;
+    const measured = Math.ceil(detailEl.getBoundingClientRect().height || detailEl.offsetHeight || 0);
+    if (measured > 0) this.state.expandedDetailHeight = measured;
   }
 }
