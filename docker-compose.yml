@@ -18,6 +18,15 @@ services:
       dockerfile: Dockerfile
     image: worldmonitor:latest
     container_name: worldmonitor
+    # Override Dockerfile HEALTHCHECK: it probes http://localhost:8080 which
+    # resolves to IPv6 ::1, but nginx binds IPv4-only on 8080 -> false unhealthy
+    # -> Coolify withholds routing -> 503. Use 127.0.0.1 to hit the IPv4 listener.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     ports:
       - "${WM_PORT:-3000}:8080"
     environment:
