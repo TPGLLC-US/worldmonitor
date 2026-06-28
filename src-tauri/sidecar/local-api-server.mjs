@@ -1837,6 +1837,27 @@ export async function createLocalApiServer(options = {}) {
           );
         }
       }
+      // Docker self-host ONLY: WS_RELAY_URL points at the internal ais-relay
+      // host (e.g. http://ais-relay:3004 on the docker network). Without
+      // trusting it the SSRF guard blocks every relay proxy call, so
+      // /api/telegram-feed, news insights, AIS vessels, OpenSky aircraft and
+      // chokepoint flows all 502 with "SSRF blocked". Mirrors the
+      // UPSTASH_REDIS_REST_URL allowlist above and stays gated on
+      // mode === 'docker' so desktop/production never widens the SSRF boundary.
+      // The ws(s):// → http(s):// rewrite matches getRelayBaseUrl() in
+      // api/_relay.js so the allowlisted origin equals the one actually fetched.
+      if (context.mode === 'docker' && process.env.WS_RELAY_URL) {
+        try {
+          const relayHttpUrl = process.env.WS_RELAY_URL
+            .replace('wss://', 'https://')
+            .replace('ws://', 'http://');
+          extraAllowedPrivateOrigins.push(new URL(relayHttpUrl).origin);
+        } catch (err) {
+          context.logger.warn(
+            `[local-api] WS_RELAY_URL is not a valid URL; not added to the private-fetch allowlist (relay calls will be SSRF-blocked): ${err.message}`,
+          );
+        }
+      }
       if (context.allowPrivateRemoteBase) {
         try { extraAllowedPrivateOrigins.push(new URL(context.remoteBase).origin); } catch {}
       }
